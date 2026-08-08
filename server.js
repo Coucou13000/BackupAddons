@@ -197,8 +197,69 @@ async function tryBackend(base, path) {
   }
 }
 
+// Un host peut répondre HTTP 200 avec un JSON qui n'est pas un manifest
+// Stremio valide (mauvaise config, page d'erreur en JSON, etc.). On vérifie
+// la structure minimale attendue avant de considérer le manifest utilisable.
+function validateManifest(json) {
+  if (!json || typeof json !== "object") return "réponse vide ou non-objet";
+  if (!json.id || typeof json.id !== "string") return "champ 'id' manquant";
+  if (!json.name || typeof json.name !== "string") return "champ 'name' manquant";
+  if (!Array.isArray(json.resources)) return "champ 'resources' manquant ou invalide";
+  if (!Array.isArray(json.types) && !Array.isArray(json.catalogs)) return "champ 'types' ou 'catalogs' manquant";
+  return null; // valide
+}
+
+async function tryManifestBackend(base) {
+  const json = await tryBackend(base, "manifest.json");
+  const issue = validateManifest(json);
+  if (issue) throw new Error(`manifest invalide (${issue})`);
+  return json;
+}
+
 // mémorise, par (espace, bloc), le dernier manifest qui a répondu correctement
 const lastGoodByBlock = new Map();
+
+// --------------------------------------------------------------
+// Statut en direct des manifests d'un bloc — pinge chaque host et indique
+// lequel est actif, en secours, ou hors service.
+// --------------------------------------------------------------
+const STATUS_TIMEOUT_MS = 4000;
+
+app.get("/api/blocks/:blockId/status", async (req, res) => {
+  const key = req.query.key;
+  const { blockId } = req.params;
+  if (!isValidKey(key)) return res.status(400).json({ error: "Clé d'espace manquante ou invalide" });
+
+  const cfg = await readConfig();
+  const block = cfg.workspaces[key]?.blocks?.find((b) => b.id === blockId);
+  if (!block) return res.status(404).json({ error: "Bloc introuvable" });
+
+  const results = await Promise.all(
+    block.manifests.map(async (m) => {
+      const base = m.replace(/\/manifest\.json\/?$/, "");
+      const started = Date.now();
+      try {
+        await tryManifestBackend(base);
+        return { url: m, ok: true, ms: Date.now() - started };
+      } catch (err) {
+        return { url: m, ok: false, ms: Date.now() - started, error: err.message };
+      }
+    })
+  );
+
+  const mapKey = `${key}:${blockId}`;
+  const cachedPreferred = lastGoodByBlock.get(mapKey) ?? 0;
+  // "Actif" = celui que le proxy utiliserait réellement là maintenant : le
+  // dernier host mémorisé s'il répond encore, sinon le premier qui répond.
+  let activeIndex = results[cachedPreferred]?.ok ? cachedPreferred : results.findIndex((r) => r.ok);
+
+  res.json({
+    manifests: results,
+    activeIndex,
+    upCount: results.filter((r) => r.ok).length,
+    total: results.length,
+  });
+});
 
 // Route : /addon/<clé privée>/<blockId>/... — la clé isole totalement les
 // blocs d'un visiteur de ceux des autres, même en cas de même nom de bloc.
@@ -228,10 +289,25 @@ app.get(/^\/addon\/([^/]+)\/([^/]+)\/(.*)$/, async (req, res) => {
 
   let lastError = null;
   for (const i of order) {
+    const isManifestRequest = subPath.split("?")[0] === "manifest.json";
     try {
-      const json = await tryBackend(bases[i], subPath);
+      // Sur manifest.json, on valide aussi la structure : un host qui répond
+      // 200 avec un JSON cassé ou incomplet est traité comme en panne, et on
+      // passe au manifest suivant du bloc.
+      const json = isManifestRequest ? await tryManifestBackend(bases[i]) : await tryBackend(bases[i], subPath);
       lastGoodByBlock.set(mapKey, i);
       console.log(`✅ [${blockId}/${subPath}] servi par manifest #${i + 1}`);
+
+      // Sur le manifest uniquement, on fige le nom affiché à "BackupAddons —
+      // <nom du bloc>" au lieu du nom que renvoie le backend qui a répondu.
+      // Ça évite que le nom change dans Nuvio selon lequel des manifests de
+      // secours a répondu, et montre clairement que c'est un bloc de secours
+      // plutôt qu'une seule instance nue. Rien d'autre n'est modifié (id,
+      // resources, catalogs...), donc le fonctionnement du bloc est inchangé.
+      if (isManifestRequest && json && typeof json === "object") {
+        json.name = `BackupAddons — ${block.name}`;
+      }
+
       return res.json(json);
     } catch (err) {
       lastError = err;

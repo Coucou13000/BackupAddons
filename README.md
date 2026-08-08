@@ -40,6 +40,20 @@ Ouvre `http://localhost:7000` : c'est la page d'administration.
 4. Clique **Enregistrer** en bas de page.
 5. Une URL apparaît dans le bloc, du type `http://ton-domaine/addon/aiometadata/manifest.json`
    — c'est celle-là que tu colles dans Nuvio (**Account → Addons → Add Addon**).
+6. Un badge et un point par manifest indiquent en direct lequel est actif, lequel
+   est en secours (disponible mais pas utilisé en priorité), et lequel est hors
+   service — y compris si un host répond mais renvoie un manifest mal formé.
+   Vérification automatique au chargement, puis toutes les 3 minutes tant que
+   l'onglet reste ouvert, plus un bouton pour rafraîchir à la demande.
+7. Utilise les flèches ↑↓ à côté de chaque manifest pour changer l'ordre de
+   priorité sans avoir à supprimer/retaper.
+8. **+ Coller plusieurs URLs** ouvre un champ texte pour ajouter plusieurs
+   manifests d'un coup (un par ligne), au lieu de cliquer "+ Ajouter" à chaque
+   fois.
+9. **Exporter** télécharge un fichier JSON de sauvegarde de tous tes blocs.
+   **Importer** recharge ce fichier (ou un export d'un autre espace) — les
+   blocs importés s'ajoutent à ceux déjà affichés, sans rien écraser ; clique
+   **Enregistrer** ensuite pour les valider.
 
 Répète pour d'autres addons si besoin (chaque bloc = une URL Nuvio différente).
 

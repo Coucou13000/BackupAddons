@@ -27,7 +27,14 @@
 
 <main id="blocks"></main>
 
-<button id="add-block" class="btn-add-block" type="button">+ Nouveau bloc</button>
+<div class="global-actions">
+  <button id="add-block" class="btn-add-block" type="button">+ Nouveau bloc</button>
+  <div class="io-buttons">
+    <button id="export-config" class="btn-io" type="button">Exporter</button>
+    <button id="import-trigger" class="btn-io" type="button">Importer</button>
+    <input id="import-file" type="file" accept="application/json" hidden />
+  </div>
+</div>
 
 <div class="save-bar">
   <span id="save-status" class="save-status"></span>
@@ -39,12 +46,19 @@
     <div class="block-head">
       <span class="block-index" data-index>BLOC — 01</span>
       <input class="block-name" type="text" placeholder="Nom du bloc, ex. AIOMetadata" data-name />
+      <span class="block-status" data-block-status hidden></span>
       <button class="btn-remove-block" type="button" title="Supprimer ce bloc" data-remove-block>&times;</button>
     </div>
 
     <ol class="manifest-list" data-manifest-list></ol>
 
     <button class="btn-add-manifest" type="button" data-add-manifest>+ Ajouter un manifest</button>
+    <button class="btn-bulk-add" type="button" data-toggle-bulk>+ Coller plusieurs URLs</button>
+
+    <div class="bulk-add" data-bulk-add hidden>
+      <textarea data-bulk-textarea placeholder="Une URL de manifest par ligne&#10;https://host1.exemple.com/manifest.json&#10;https://host2.exemple.com/manifest.json"></textarea>
+      <button class="btn-bulk-submit" type="button" data-bulk-submit>Ajouter ces manifests</button>
+    </div>
 
     <div class="install-url" data-install-url hidden>
       <span class="install-label">URL à coller dans Nuvio</span>
@@ -52,6 +66,7 @@
         <code data-install-value></code>
         <button class="btn-copy" type="button" data-copy>Copier</button>
       </div>
+      <button class="btn-check-status" type="button" data-check-status>Vérifier le statut</button>
     </div>
   </section>
 </template>
@@ -59,7 +74,13 @@
 <template id="manifest-row-template">
   <li class="manifest-row" data-manifest-row>
     <span class="manifest-order" data-order>01</span>
+    <span class="status-dot" data-status-dot title="Statut inconnu"></span>
     <input type="url" placeholder="https://exemple.com/manifest.json" data-manifest-url />
+    <span class="status-label" data-status-label></span>
+    <div class="reorder-buttons">
+      <button class="btn-reorder" type="button" title="Monter (priorité plus haute)" data-move-up>&uarr;</button>
+      <button class="btn-reorder" type="button" title="Descendre (priorité plus basse)" data-move-down>&darr;</button>
+    </div>
     <button class="btn-remove-manifest" type="button" title="Retirer" data-remove-manifest>&times;</button>
   </li>
 </template>

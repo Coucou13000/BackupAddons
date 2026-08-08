@@ -1,7 +1,49 @@
+// --------------------------------------------------------------
+// Espace privé : une clé aléatoire, générée une seule fois par visiteur,
+// qui isole totalement ses blocs de ceux de n'importe qui d'autre.
+// --------------------------------------------------------------
+const STORAGE_KEY = "nuvioWorkspaceKey";
+
+function generateKey() {
+  if (window.crypto?.randomUUID) return window.crypto.randomUUID().replace(/-/g, "");
+  // repli si randomUUID indisponible (très vieux navigateur)
+  return Array.from({ length: 32 }, () => Math.floor(Math.random() * 16).toString(16)).join("");
+}
+
+function ensureWorkspaceKey() {
+  const url = new URL(window.location.href);
+  let key = url.searchParams.get("key");
+
+  if (key) {
+    localStorage.setItem(STORAGE_KEY, key);
+  } else {
+    key = localStorage.getItem(STORAGE_KEY);
+    if (!key) {
+      key = generateKey();
+      localStorage.setItem(STORAGE_KEY, key);
+    }
+    url.searchParams.set("key", key);
+    window.history.replaceState({}, "", url);
+  }
+  return key;
+}
+
+const WORKSPACE_KEY = ensureWorkspaceKey();
+
 const blocksEl = document.getElementById("blocks");
 const blockTpl = document.getElementById("block-template");
 const rowTpl = document.getElementById("manifest-row-template");
 const saveStatus = document.getElementById("save-status");
+const privateLinkValue = document.getElementById("private-link-value");
+const copyPrivateLinkBtn = document.getElementById("copy-private-link");
+
+privateLinkValue.textContent = window.location.href;
+copyPrivateLinkBtn.addEventListener("click", () => {
+  navigator.clipboard.writeText(window.location.href);
+  const original = copyPrivateLinkBtn.textContent;
+  copyPrivateLinkBtn.textContent = "Copié";
+  setTimeout(() => (copyPrivateLinkBtn.textContent = original), 1200);
+});
 
 function pad(n) { return String(n).padStart(2, "0"); }
 
@@ -72,7 +114,7 @@ function addBlock(data = { id: "", name: "", manifests: [""] }) {
     const installEl = mounted.querySelector("[data-install-url]");
     installEl.hidden = false;
     mounted.querySelector("[data-install-value]").textContent =
-      `${window.location.origin}/addon/${data.id}/manifest.json`;
+      `${window.location.origin}/addon/${WORKSPACE_KEY}/${data.id}/manifest.json`;
   }
 
   renumberBlocks();
@@ -98,7 +140,7 @@ async function saveAll() {
     const res = await fetch("/api/blocks", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ blocks }),
+      body: JSON.stringify({ key: WORKSPACE_KEY, blocks }),
     });
     if (!res.ok) throw new Error("Échec de l'enregistrement");
     const data = await res.json();
@@ -114,7 +156,7 @@ document.getElementById("save-all").addEventListener("click", saveAll);
 
 async function load(preloaded) {
   blocksEl.innerHTML = "";
-  const blocks = preloaded || (await (await fetch("/api/blocks")).json());
+  const blocks = preloaded || (await (await fetch(`/api/blocks?key=${WORKSPACE_KEY}`)).json());
   if (!blocks.length) {
     addBlock();
   } else {

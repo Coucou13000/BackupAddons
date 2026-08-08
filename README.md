@@ -8,6 +8,20 @@ seule URL par bloc, tout le reste est invisible.
 Tu peux créer autant de blocs que tu veux (un pour AIOMetadata, un pour AIOStreams, etc.),
 et dans chaque bloc autant de manifests que tu veux.
 
+## Espace privé
+
+Cet outil est fait pour être utilisé par plusieurs personnes sur le même déploiement,
+sans que personne ne voie les blocs des autres. Au premier chargement, la page génère
+une clé aléatoire, l'ajoute à l'URL (`?key=...`) et la garde en mémoire dans le
+navigateur. Toutes tes actions (lecture, écriture, URLs d'installation) passent par
+cette clé — deux personnes peuvent nommer un bloc "wastream" chacune de leur côté sans
+aucun conflit, et personne ne peut voir la config de personne d'autre sans connaître sa
+clé exacte.
+
+**Garde ton URL complète (avec le `?key=...`) quelque part** — c'est elle qui te
+redonne accès à tes blocs. Si tu la perds et vides le cache de ton navigateur, tu ne
+pourras pas la retrouver (il n'y a pas de mot de passe ni de compte à récupérer).
+
 ## Lancer en local
 
 ```bash
@@ -43,10 +57,10 @@ classique).
 2. Sur https://render.com → "New +" → "Web Service" → connecte le repo.
 3. Build command : `npm install`
 4. Start command : `npm start`
-5. **Important** : ajoute un "Persistent Disk" (même petit, 1 Go suffit) monté sur le
-   dossier du projet, sinon `config.json` repart à zéro à chaque redéploiement.
-6. Render te donne une URL du type `https://ton-addon.onrender.com` — c'est ton
+5. Render te donne une URL du type `https://ton-addon.onrender.com` — c'est ton
    domaine pour la page d'admin et pour les blocs.
+6. Pour que la config survive aux redémarrages, vois la section
+   **"Rendre la config persistante"** ci-dessous.
 
 ### Railway.app
 Même principe, connecte le repo GitHub. Railway propose aussi un volume persistant à
@@ -71,8 +85,45 @@ server.js          → serveur Express : page d'admin + API + proxy de secours
 public/index.html  → page web
 public/style.css   → style
 public/app.js      → logique des blocs (ajout/suppression, sauvegarde)
-config.json         → généré/mis à jour automatiquement, ne pas éditer à la main
+config.json         → utilisé seulement si Upstash n'est pas configuré, ne pas éditer à la main
 ```
+
+## Rendre la config persistante
+
+Par défaut, la config est stockée dans `config.json` sur le disque du service.
+**Sur le tier gratuit de Render, ce fichier repart à zéro à chaque fois que le
+service s'endort après 15 min d'inactivité et se réveille** — pas seulement aux
+redéploiements. Deux façons de régler ça, au choix :
+
+### Option gratuite — Upstash Redis
+
+[Upstash](https://upstash.com) offre une base Redis gratuite qui persiste vraiment
+(contrairement au disque de Render). Le serveur bascule dessus automatiquement dès
+que les variables d'environnement sont présentes — aucun changement de code.
+
+1. Crée un compte gratuit sur https://upstash.com (pas de carte bancaire requise).
+2. "Create Database" → choisis la région la plus proche de ton service Render →
+   type Redis, tier gratuit.
+3. Dans le dashboard de la base, onglet **REST API**, copie `UPSTASH_REDIS_REST_URL`
+   et `UPSTASH_REDIS_REST_TOKEN`.
+4. Sur Render : Settings de ton service → **Environment** → ajoute ces deux
+   variables avec les valeurs copiées.
+5. Redéploie. Dans les logs Render, tu dois voir :
+   `Stockage config : Upstash Redis (persistant) ✓`
+
+Le tier gratuit d'Upstash (10 000 commandes/jour) est largement suffisant pour cet
+usage.
+
+### Option payante — disque Render
+
+Si tu préfères rester 100% sur Render sans service tiers :
+
+1. Passe ton service sur un plan payant (Starter, ~7$/mois).
+2. Onglet **Disks** → "Add Disk" → monte-le sur le dossier du projet (1 Go suffit,
+   ~0,25$/mois en plus).
+3. Redéploie. Le fichier `config.json` survira désormais aux redémarrages —
+   aucun changement de code nécessaire : le serveur utilise le fichier local par
+   défaut si aucune variable Upstash n'est définie.
 
 ## "Cannot GET /" au déploiement
 

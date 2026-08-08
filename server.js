@@ -52,19 +52,70 @@ app.get("/", (req, res) => {
 app.get("/healthz", (req, res) => res.json({ ok: true, uptime: process.uptime() }));
 
 // --------------------------------------------------------------
-// Stockage de la config (blocs d'addons) dans config.json
+// Stockage de la config : un espace ("workspace") isolé par clé privée.
+// Structure : { workspaces: { "<clé>": { blocks: [...] } } }
+//
+// Deux backends possibles, choisis automatiquement :
+// - Upstash Redis (gratuit, persiste vraiment) si UPSTASH_REDIS_REST_URL et
+//   UPSTASH_REDIS_REST_TOKEN sont définis en variables d'environnement.
+// - Sinon, fichier local config.json (fonctionne en local, et sur Render
+//   uniquement si un disque persistant payant est attaché — sur le tier
+//   gratuit de Render, ce fichier repart à zéro à chaque réveil du service).
 // --------------------------------------------------------------
+const KEY_RE = /^[a-zA-Z0-9_-]{8,80}$/;
+const UPSTASH_URL = process.env.UPSTASH_REDIS_REST_URL;
+const UPSTASH_TOKEN = process.env.UPSTASH_REDIS_REST_TOKEN;
+const USE_UPSTASH = Boolean(UPSTASH_URL && UPSTASH_TOKEN);
+const UPSTASH_STORE_KEY = "nuvio-failover-config";
+
+function isValidKey(key) {
+  return typeof key === "string" && KEY_RE.test(key);
+}
+
+async function upstashRequest(pathSegments, body) {
+  const url = `${UPSTASH_URL.replace(/\/+$/, "")}/${pathSegments.map(encodeURIComponent).join("/")}`;
+  const res = await fetch(url, {
+    method: body !== undefined ? "POST" : "GET",
+    headers: {
+      Authorization: `Bearer ${UPSTASH_TOKEN}`,
+      ...(body !== undefined ? { "Content-Type": "text/plain" } : {}),
+    },
+    body,
+  });
+  if (!res.ok) throw new Error(`Upstash HTTP ${res.status}`);
+  return res.json();
+}
+
 async function readConfig() {
+  if (USE_UPSTASH) {
+    try {
+      const data = await upstashRequest(["get", UPSTASH_STORE_KEY]);
+      if (!data.result) return { workspaces: {} };
+      const parsed = JSON.parse(data.result);
+      return parsed.workspaces ? parsed : { workspaces: {} };
+    } catch (err) {
+      console.error("❌ Lecture Upstash impossible :", err.message);
+      return { workspaces: {} };
+    }
+  }
+
   try {
     const raw = await fs.readFile(CONFIG_PATH, "utf-8");
-    return JSON.parse(raw);
+    const parsed = JSON.parse(raw);
+    if (!parsed.workspaces) return { workspaces: {} };
+    return parsed;
   } catch {
-    return { blocks: [] };
+    return { workspaces: {} };
   }
 }
 
 async function writeConfig(cfg) {
-  await fs.writeFile(CONFIG_PATH, JSON.stringify(cfg, null, 2), "utf-8");
+  const json = JSON.stringify(cfg, null, 2);
+  if (USE_UPSTASH) {
+    await upstashRequest(["set", UPSTASH_STORE_KEY], json);
+    return;
+  }
+  await fs.writeFile(CONFIG_PATH, json, "utf-8");
 }
 
 function slugify(str) {
@@ -87,14 +138,19 @@ function uniqueId(base, existingIds) {
 }
 
 // --------------------------------------------------------------
-// API admin — utilisée par la page web
+// API admin — utilisée par la page web, toujours scopée à ?key=
 // --------------------------------------------------------------
 app.get("/api/blocks", async (req, res) => {
+  const key = req.query.key;
+  if (!isValidKey(key)) return res.status(400).json({ error: "Clé d'espace manquante ou invalide" });
   const cfg = await readConfig();
-  res.json(cfg.blocks);
+  res.json(cfg.workspaces[key]?.blocks || []);
 });
 
 app.post("/api/blocks", async (req, res) => {
+  const key = req.body?.key;
+  if (!isValidKey(key)) return res.status(400).json({ error: "Clé d'espace manquante ou invalide" });
+
   const incoming = Array.isArray(req.body?.blocks) ? req.body.blocks : null;
   if (!incoming) return res.status(400).json({ error: "Format invalide" });
 
@@ -110,7 +166,9 @@ app.post("/api/blocks", async (req, res) => {
     return { id, name, manifests };
   });
 
-  await writeConfig({ blocks });
+  const cfg = await readConfig();
+  cfg.workspaces[key] = { blocks };
+  await writeConfig(cfg);
   res.json({ ok: true, blocks });
 });
 
@@ -139,32 +197,40 @@ async function tryBackend(base, path) {
   }
 }
 
-// mémorise, par bloc, le dernier manifest qui a répondu correctement
+// mémorise, par (espace, bloc), le dernier manifest qui a répondu correctement
 const lastGoodByBlock = new Map();
 
-app.get(/^\/addon\/([^/]+)\/(.*)$/, async (req, res) => {
-  const blockId = req.params[0];
+// Route : /addon/<clé privée>/<blockId>/... — la clé isole totalement les
+// blocs d'un visiteur de ceux des autres, même en cas de même nom de bloc.
+app.get(/^\/addon\/([^/]+)\/([^/]+)\/(.*)$/, async (req, res) => {
+  const key = req.params[0];
+  const blockId = req.params[1];
   const query = req.url.includes("?") ? req.url.slice(req.url.indexOf("?")) : "";
-  const subPath = req.params[1] + query;
-
-  const cfg = await readConfig();
-  const block = cfg.blocks.find((b) => b.id === blockId);
+  const subPath = req.params[2] + query;
+  const mapKey = `${key}:${blockId}`;
 
   res.set("Access-Control-Allow-Origin", "*");
+
+  if (!isValidKey(key)) {
+    return res.status(400).json({ err: "Clé d'espace invalide" });
+  }
+
+  const cfg = await readConfig();
+  const block = cfg.workspaces[key]?.blocks?.find((b) => b.id === blockId);
 
   if (!block || block.manifests.length === 0) {
     return res.status(404).json({ err: "Bloc introuvable ou vide" });
   }
 
   const bases = block.manifests.map((m) => m.replace(/\/manifest\.json\/?$/, ""));
-  const lastGood = lastGoodByBlock.get(blockId) || 0;
+  const lastGood = lastGoodByBlock.get(mapKey) || 0;
   const order = [lastGood, ...bases.map((_, i) => i).filter((i) => i !== lastGood)];
 
   let lastError = null;
   for (const i of order) {
     try {
       const json = await tryBackend(bases[i], subPath);
-      lastGoodByBlock.set(blockId, i);
+      lastGoodByBlock.set(mapKey, i);
       console.log(`✅ [${blockId}/${subPath}] servi par manifest #${i + 1}`);
       return res.json(json);
     } catch (err) {
@@ -199,7 +265,14 @@ app.listen(PORT, () => {
   if (fsSync.existsSync(PUBLIC_DIR)) {
     console.log(`Contenu public/    : ${fsSync.readdirSync(PUBLIC_DIR).join(", ")}`);
   }
-  console.log(`config.json        : ${fsSync.existsSync(CONFIG_PATH) ? "trouvé ✓" : "sera créé au premier enregistrement"}`);
+  if (USE_UPSTASH) {
+    console.log(`Stockage config    : Upstash Redis (persistant) ✓`);
+  } else {
+    console.log(`Stockage config    : fichier local config.json`);
+    console.log(`                     ⚠️  sur le tier gratuit de Render, ce fichier repart à`);
+    console.log(`                     zéro à chaque réveil du service. Voir README.md pour`);
+    console.log(`                     activer Upstash (gratuit, persistant) ou un disque payant.`);
+  }
   console.log(`Interface d'admin  : http://localhost:${PORT}/`);
 });
 

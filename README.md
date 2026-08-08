@@ -74,6 +74,21 @@ public/app.js      → logique des blocs (ajout/suppression, sauvegarde)
 config.json         → généré/mis à jour automatiquement, ne pas éditer à la main
 ```
 
+## "Cannot GET /" au déploiement
+
+Si la page d'accueil affiche `Cannot GET /` (ou une erreur 500 avec un message
+expliquant que `public/` est introuvable), va voir l'onglet **Logs** de ton service
+sur Render juste après un déploiement : le serveur affiche au démarrage si le dossier
+`public/` a été trouvé, et liste son contenu s'il existe. Les causes les plus
+fréquentes :
+
+- Le dossier `public/` n'a pas été poussé sur le repo GitHub connecté à Render
+  (vérifie sur GitHub que `public/index.html`, `public/style.css` et `public/app.js`
+  apparaissent bien dans le repo).
+- Le champ **"Root Directory"** dans les paramètres du service Render pointe sur le
+  mauvais dossier (il doit pointer sur le dossier qui contient directement `server.js`
+  et `package.json`).
+
 ## Limites à connaître
 
 - Si **tous** les manifests d'un bloc sont en panne en même temps, ce bloc renvoie une

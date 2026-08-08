@@ -1,0 +1,60 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Nuvio Failover — Blocs d'addons</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="style.css" />
+</head>
+<body>
+
+<header class="page-head">
+  <div class="eyebrow">RELAIS D'ADDONS</div>
+  <h1>Blocs de secours</h1>
+  <p class="lede">Un bloc regroupe plusieurs manifests d'un même addon. Si le premier ne répond pas, le suivant prend le relais — automatiquement, à chaque appel de Nuvio.</p>
+</header>
+
+<main id="blocks"></main>
+
+<button id="add-block" class="btn-add-block" type="button">+ Nouveau bloc</button>
+
+<div class="save-bar">
+  <span id="save-status" class="save-status"></span>
+  <button id="save-all" class="btn-save" type="button">Enregistrer</button>
+</div>
+
+<template id="block-template">
+  <section class="block" data-block>
+    <div class="block-head">
+      <span class="block-index" data-index>BLOC — 01</span>
+      <input class="block-name" type="text" placeholder="Nom du bloc, ex. AIOMetadata" data-name />
+      <button class="btn-remove-block" type="button" title="Supprimer ce bloc" data-remove-block>&times;</button>
+    </div>
+
+    <ol class="manifest-list" data-manifest-list></ol>
+
+    <button class="btn-add-manifest" type="button" data-add-manifest>+ Ajouter un manifest</button>
+
+    <div class="install-url" data-install-url hidden>
+      <span class="install-label">URL à coller dans Nuvio</span>
+      <div class="install-row">
+        <code data-install-value></code>
+        <button class="btn-copy" type="button" data-copy>Copier</button>
+      </div>
+    </div>
+  </section>
+</template>
+
+<template id="manifest-row-template">
+  <li class="manifest-row" data-manifest-row>
+    <span class="manifest-order" data-order>01</span>
+    <input type="url" placeholder="https://exemple.com/manifest.json" data-manifest-url />
+    <button class="btn-remove-manifest" type="button" title="Retirer" data-remove-manifest>&times;</button>
+  </li>
+</template>
+
+<script src="app.js"></script>
+</body>
+</html>

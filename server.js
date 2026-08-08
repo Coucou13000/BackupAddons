@@ -1,17 +1,55 @@
 import express from "express";
 import fetch from "node-fetch";
 import fs from "fs/promises";
+import fsSync from "fs";
 import path from "path";
 import { fileURLToPath } from "url";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const CONFIG_PATH = path.join(__dirname, "config.json");
+const PUBLIC_DIR = path.join(__dirname, "public");
 const TIMEOUT_MS = 6000;
 const PORT = process.env.PORT || 7000;
 
 const app = express();
+
+// --------------------------------------------------------------
+// Logs — tout ce qui passe ici apparaît dans l'onglet "Logs" de Render
+// --------------------------------------------------------------
+app.use((req, res, next) => {
+  const start = Date.now();
+  res.on("finish", () => {
+    console.log(`${req.method} ${req.originalUrl} → ${res.statusCode} (${Date.now() - start}ms)`);
+  });
+  next();
+});
+
 app.use(express.json({ limit: "1mb" }));
-app.use(express.static(path.join(__dirname, "public")));
+app.use(express.static(PUBLIC_DIR));
+
+// Filet de sécurité explicite pour "/" : si express.static ne trouve pas
+// index.html (dossier public/ absent du déploiement, mauvais Root Directory
+// sur Render, etc.), on log clairement la cause au lieu de laisser Express
+// renvoyer un "Cannot GET /" muet.
+app.get("/", (req, res) => {
+  const indexPath = path.join(PUBLIC_DIR, "index.html");
+  if (fsSync.existsSync(indexPath)) {
+    return res.sendFile(indexPath);
+  }
+  console.error(`❌ index.html introuvable à ${indexPath}`);
+  console.error(`   Contenu de ${PUBLIC_DIR} :`, fsSync.existsSync(PUBLIC_DIR) ? fsSync.readdirSync(PUBLIC_DIR) : "dossier public/ absent");
+  res
+    .status(500)
+    .type("text/plain")
+    .send(
+      "Le dossier public/ (page d'admin) est introuvable sur ce déploiement.\n" +
+      "Vérifie sur Render que le dossier 'public' est bien commité sur GitHub et que\n" +
+      "le 'Root Directory' du service pointe sur le dossier qui contient server.js."
+    );
+});
+
+// Endpoint de santé simple, utile pour vérifier que le service répond
+app.get("/healthz", (req, res) => res.json({ ok: true, uptime: process.uptime() }));
 
 // --------------------------------------------------------------
 // Stockage de la config (blocs d'addons) dans config.json
@@ -139,7 +177,35 @@ app.get(/^\/addon\/([^/]+)\/(.*)$/, async (req, res) => {
   res.status(502).json({ err: "Tous les manifests de ce bloc sont indisponibles", detail: lastError?.message });
 });
 
+// 404 explicite pour toute route non gérée (au lieu du message muet par défaut
+// d'Express), pour repérer facilement dans les logs Render un mauvais chemin
+// collé dans Nuvio ou un bloc mal orthographié.
+app.use((req, res) => {
+  console.warn(`⚠️  404 : ${req.method} ${req.originalUrl} ne correspond à aucune route`);
+  res.status(404).type("text/plain").send(`Cannot ${req.method} ${req.originalUrl}`);
+});
+
+// Filet de sécurité pour toute erreur non attrapée, loguée avec sa stack
+// complète plutôt que de faire planter le process silencieusement.
+app.use((err, req, res, next) => {
+  console.error(`❌ Erreur non gérée sur ${req.method} ${req.originalUrl} :`, err);
+  res.status(500).json({ err: "Erreur interne du serveur" });
+});
+
 app.listen(PORT, () => {
   console.log(`🚀 Nuvio Failover Addon (v2, multi-blocs) démarré sur le port ${PORT}`);
-  console.log(`Interface d'administration : http://localhost:${PORT}/`);
+  console.log(`__dirname          : ${__dirname}`);
+  console.log(`Dossier public/    : ${fsSync.existsSync(PUBLIC_DIR) ? "trouvé ✓" : "INTROUVABLE ✗"}`);
+  if (fsSync.existsSync(PUBLIC_DIR)) {
+    console.log(`Contenu public/    : ${fsSync.readdirSync(PUBLIC_DIR).join(", ")}`);
+  }
+  console.log(`config.json        : ${fsSync.existsSync(CONFIG_PATH) ? "trouvé ✓" : "sera créé au premier enregistrement"}`);
+  console.log(`Interface d'admin  : http://localhost:${PORT}/`);
+});
+
+process.on("unhandledRejection", (reason) => {
+  console.error("❌ unhandledRejection :", reason);
+});
+process.on("uncaughtException", (err) => {
+  console.error("❌ uncaughtException :", err);
 });

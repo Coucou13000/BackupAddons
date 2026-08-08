@@ -1,0 +1,13 @@
+{
+  "name": "nuvio-failover-addon",
+  "version": "2.0.0",
+  "description": "Interface web pour creer des blocs d'addons Nuvio/Stremio avec bascule automatique entre plusieurs manifests",
+  "type": "module",
+  "main": "server.js",
+  "scripts": { "start": "node server.js" },
+  "license": "ISC",
+  "dependencies": {
+    "express": "^4.19.2",
+    "node-fetch": "^3.3.2"
+  }
+}
